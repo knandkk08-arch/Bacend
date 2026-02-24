@@ -13,7 +13,7 @@ import requests as http_requests
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
-CORS(app, origins=["https://ezpay2.vercel.app", "http://localhost:3000", "http://127.0.0.1:5500"])
+CORS(app, origins="*")
 
 API_ID = 37195487
 API_HASH = "f630cc930e1ac56edcac9410b759de4a"
