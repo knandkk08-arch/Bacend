@@ -3,7 +3,7 @@ services:
     name: ezpay-backend
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn main:app --bind 0.0.0.0:$PORT --threads 4 --timeout 120
+    startCommand: gunicorn main:app --threads 4 --timeout 120
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
