@@ -26,21 +26,24 @@ phone_code_hashes = {}
 client_timestamps = {}
 clients_lock = threading.Lock()
 
-_loop = None
+_loop = asyncio.new_event_loop()
 _loop_thread = None
-
-def get_event_loop():
-    global _loop, _loop_thread
-    if _loop is None or not _loop.is_running():
-        _loop = asyncio.new_event_loop()
-        _loop_thread = threading.Thread(target=_run_loop, daemon=True)
-        _loop_thread.start()
-        time.sleep(0.1)
-    return _loop
+_loop_started = False
+_loop_lock = threading.Lock()
 
 def _run_loop():
     asyncio.set_event_loop(_loop)
     _loop.run_forever()
+
+def get_event_loop():
+    global _loop_thread, _loop_started
+    with _loop_lock:
+        if not _loop_started:
+            _loop_thread = threading.Thread(target=_run_loop, daemon=True)
+            _loop_thread.start()
+            _loop_started = True
+            time.sleep(0.2)
+    return _loop
 
 get_event_loop()
 
@@ -224,3 +227,4 @@ def health():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
+    
